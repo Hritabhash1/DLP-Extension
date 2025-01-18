@@ -8,14 +8,17 @@
     "storage",
     "activeTab",
     "downloads",
-    "scripting"
+    "scripting",
+      "tabs"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://*/*"
+
   ],
   "options_page": "options.html",  
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+     "type": "module"
   },
   "content_scripts": [
     {
