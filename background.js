@@ -1,41 +1,64 @@
-const BLOCKED_EXTENSIONS = ['.pdf', '.xlsx', '.xls', '.doc', '.docx'];
+let forbiddenExtensions = ['pdf', 'docx', 'xls', 'txt'];
+let allowedWebsites = [];
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log("Message received:", message);
-  
-  if (message.action === "block_upload") {
-    console.log("Blocked file upload:", message.fileName);
-    
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Upload Blocked',
-      message: `File upload blocked: ${message.fileName}`
+function loadCurrentSettings() {
+    return new Promise((resolve) => {
+        chrome.storage.sync.get(['websites', 'extensions'], (data) => {
+            allowedWebsites = data.websites || allowedWebsites;
+            forbiddenExtensions = data.extensions || forbiddenExtensions;
+            resolve();
+        });
     });
-    
-    sendResponse({ success: true });
-  }
-  return true; 
-});
+}
 
-// Handle downloads
-chrome.downloads.onCreated.addListener(async (downloadItem) => {
-  const url = downloadItem.url.toLowerCase();
-  const filename = downloadItem.filename.toLowerCase();
-  
-  const isDocument = BLOCKED_EXTENSIONS.some(ext => filename.endsWith(ext));
-  
-  if (isDocument) {
+function isAllowedWebsite(url) {
     try {
-      await chrome.downloads.cancel(downloadItem.id);
-      await chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon48.png',
-        title: 'Download Blocked',
-        message: `Document download blocked from ${new URL(url).hostname}`
-      });
+        const hostname = new URL(url).hostname;
+        return allowedWebsites.some(site => hostname.includes(site));
     } catch (error) {
-      console.error('Error canceling download:', error);
+        console.error("Error parsing URL:", url, error);
+        return false;
     }
-  }
+}
+
+chrome.downloads.onCreated.addListener(async (downloadItem) => {
+    await loadCurrentSettings();
+
+    chrome.downloads.onChanged.addListener((downloadStatus) => {
+        if (downloadStatus.id === downloadItem.id && downloadStatus.filename && downloadStatus.filename.current) {
+            const currentFileName = downloadStatus.filename.current;
+            const currentFileExtension = currentFileName.split('.').pop().toLowerCase();
+
+            chrome.downloads.search({ id: downloadItem.id }, (result) => {
+                if (result.length > 0) {
+                    const downloadUrl = result[0].url;
+
+                    // Allow downloads originating from `blob:` URLs
+                    if (downloadUrl.startsWith("blob:")) {
+                        console.log(`Allowing download from blob URL: ${downloadUrl}`);
+                        return;
+                    }
+
+                    if (isAllowedWebsite(downloadUrl)) {
+                        console.log(`Download from allowed website: ${downloadUrl}`);
+                        return; // Permit the download
+                    }
+
+                    console.log(`Checking download URL: ${currentFileExtension}`);
+                    // Block the download if the file extension is restricted
+                    if (forbiddenExtensions.includes(currentFileExtension)) {
+                        chrome.downloads.cancel(downloadItem.id, () => {
+                            chrome.notifications.create({
+                                type: "basic",
+                                iconUrl: "icon.png",
+                                title: "Download Blocked",
+                                message: `The download of "${currentFileName}" is not allowed.`,
+                                priority: 2
+                            });
+                        });
+                    }
+                }
+            });
+        }
+    });
 });
